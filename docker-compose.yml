@@ -1,0 +1,19 @@
+version: "3"
+
+services:
+  amsc:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    image: amsc
+    container_name: amsc
+    tty: true
+    environment:
+      NODE_PATH: /usr/local/lib/node_modules
+      TZ: Asia/Tokyo
+    stdin_open: true
+    restart: always
+    working_dir: /amsc/
+    #    volumes:
+    #      - ./src/:/amsc/
+    command: node discord.js
