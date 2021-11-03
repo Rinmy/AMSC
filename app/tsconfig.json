@@ -1,0 +1,20 @@
+{
+	"include": ["./src/*.ts"],
+	"compilerOptions": {
+		"target": "es2020",
+		"lib": ["es2020"],
+		"module": "es2020",
+		"rootDir": "./src/",
+		"moduleResolution": "node",
+		"removeComments": true,
+		"esModuleInterop": true,
+		"strict": true,
+		"noImplicitAny": true,
+		"noImplicitThis": true,
+		"alwaysStrict": true,
+		"strictBindCallApply": true,
+		"strictNullChecks": true,
+		"strictFunctionTypes": true,
+		"strictPropertyInitialization": true
+	}
+}

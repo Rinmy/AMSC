@@ -1,0 +1,18 @@
+version: "3"
+
+services:
+  amsc-dev:
+    build:
+      context: ./
+      dockerfile: Dockerfile.dev
+    image: amsc-dev
+    container_name: amsc-dev
+    tty: true
+    stdin_open: true
+    init: true
+    environment:
+      NODE_PATH: /usr/local/lib/node_modules
+      TZ: Asia/Tokyo
+    working_dir: /app/
+    volumes:
+      - ./app/:/app/

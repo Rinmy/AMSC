@@ -1,36 +1,254 @@
-const Discord = require("discord.js");
-const Fs = require("fs");
-const Compute = require("@google-cloud/compute");
+import {
+	Client,
+	Intents,
+	MessageEmbed,
+	MessageActionRow,
+	MessageButton,
+	Message,
+} from "discord.js";
+// @ts-expect-error
+import Compute from "@google-cloud/compute";
+import Fs from "fs";
+import {fileURLToPath} from "url";
+import {dirname} from "path";
 
-// このプログラムに必要なコンフィグ
-const CONFIG = require("./config.json");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const CONFIG = JSON.parse(Fs.readFileSync(`${__dirname}/config.json`, "utf-8"));
+const serverList = JSON.parse(Fs.readFileSync(`${__dirname}/server.json`, "utf-8"));
 
 const compute = new Compute({
-	projectId: CONFIG["gcp"]["project_id"],
+	projectId: CONFIG.gcp.project_id,
 	keyFilename: "./api.json",
 });
 
-const discord = new Discord.Client({
-	intents: [Discord.Intents.FLAGS.GUILDS],
+const discord = new Client({
+	intents: [
+		Intents.FLAGS.GUILDS,
+		Intents.FLAGS.GUILD_MESSAGES,
+		Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
+	],
 });
 
-function sleep(seconds) {
-	return new Promise((resolve) => {
-		setTimeout(() => {
-			resolve();
-		}, seconds);
+// zzZ
+const sleep = (seconds: number): void => {
+	new Promise((resolve) => {
+		setTimeout(resolve, seconds);
 	});
-}
+};
 
-function appendLog(content) {
+// ログ
+const appendLog = (content: string): void => {
 	const date = new Date();
-	const currentTime = `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}|${date.getHours()}:${date.getMinutes()}`;
+	const currentTime = `${date.getFullYear()}.${
+		date.getMonth() + 1
+	}.${date.getDate()}|${date.getHours()}:${date.getMinutes()}`;
 	const log = `${currentTime}\n${content}\n\n---------------------\n\n`;
 
 	Fs.appendFileSync("./error.log", log);
-}
+};
 
-class Commands {
+// Minecraftサーバーの状態チェック
+interface serverStatus {
+	status: string;
+	ip: string;
+}
+const getServerStatus = async (id: string): Promise<serverStatus> => {
+	interface serverData {
+		discord_server_id: string;
+		gcp_instance: string;
+		gcp_zone: string;
+	}
+
+	const server = serverList.server.filter((list: serverData): boolean => {
+		return list.discord_server_id === id;
+	})[0];
+
+	if (typeof server !== "undefined") {
+		const zone = compute.zone(server.gcp_zone);
+		const instance = zone.vm(server.gcp_instance);
+		const data = await instance.get();
+
+		const ip =
+			data[0]["metadata"]["networkInterfaces"][0]["accessConfigs"][0]["natIP"];
+		const status = data[0]["metadata"]["status"];
+
+		return {
+			status: status,
+			ip: ip,
+		};
+	} else {
+		return {
+			status: "",
+			ip: "",
+		};
+	}
+};
+
+// 要望聞く
+interface whatSay {
+	embeds: MessageEmbed[];
+	components: MessageActionRow[];
+}
+const what = async (guildId: string): Promise<whatSay> => {
+	const server: serverStatus = await getServerStatus(guildId);
+
+	const embed = new MessageEmbed()
+		.setColor("#29B6F6")
+		.setTitle("")
+		.setAuthor("(。´・ω・)ん?")
+		.setDescription("");
+
+	const updateStatusButton = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setLabel("ステータス更新")
+			.setCustomId("update-status")
+			.setStyle("PRIMARY")
+	);
+
+	const startButton = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setLabel("サーバー起動")
+			.setCustomId("start")
+			.setStyle("PRIMARY")
+	);
+
+	const stopButton = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setLabel("サーバー停止")
+			.setCustomId("stop")
+			.setStyle("DANGER")
+	);
+
+	const registerButton = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setLabel("サーバー登録")
+			.setCustomId("register")
+			.setStyle("SUCCESS")
+	);
+
+	const viewStatusButton = new MessageActionRow().addComponents(
+		new MessageButton()
+			.setLabel("ステータス")
+			.setURL(`https://mcsrvstat.us/server/${server.ip}`)
+			.setStyle("LINK")
+	);
+
+	const closeButton = new MessageActionRow().addComponents(
+		new MessageButton().setLabel("閉じる").setCustomId("close").setStyle("DANGER")
+	);
+
+	let components: MessageActionRow[];
+	switch (server.status) {
+		// サーバー登録なし
+		case "":
+			components = [registerButton, updateStatusButton, closeButton];
+			break;
+
+		// 停止状態
+		case "TERMINATED":
+			components = [startButton, updateStatusButton, closeButton];
+			break;
+
+		// 動作中
+		case "RUNNING":
+			components = [stopButton, updateStatusButton, viewStatusButton, closeButton];
+			break;
+
+		// 停止処理中
+		case "STOPPING":
+			components = [updateStatusButton, closeButton];
+			break;
+
+		// 起動処理中
+		case "STAGING":
+			components = [updateStatusButton, closeButton];
+			break;
+
+		// 不明
+		default:
+			components = [updateStatusButton, closeButton];
+			break;
+	}
+
+	return {
+		embeds: [embed],
+		components: components,
+	};
+};
+
+discord.on("messageCreate", async (message: Message): Promise<void> => {
+	if (message.author.bot) {
+		return;
+	}
+
+	try {
+		message.delete();
+
+		if (message.guild !== null) {
+			const content = await what(message.guild.id);
+			message.channel.send(content);
+		} else {
+			throw new Error("guildなし...？ どゆこと？");
+		}
+	} catch (messageError) {
+		appendLog(String(messageError));
+	}
+});
+
+discord.on("interactionCreate", async (interaction): Promise<void> => {
+	if (interaction.isButton()) {
+		const register = async (): Promise<void> => {
+			interaction.update("登録中です。");
+
+			serverList.server.push({
+				discord_server_id: interaction.guildId,
+				gcp_instance: "test",
+				gcp_zone: "test2",
+			});
+
+			Fs.writeFileSync(`${__dirname}/server.json`, JSON.stringify(serverList));
+
+			interaction.update("登録しました。");
+		};
+
+		try {
+			switch (interaction.customId) {
+				case "update-status":
+					const content = await what(interaction.guildId);
+					interaction.update(content);
+					break;
+
+				case "start":
+					interaction.update("起動");
+					break;
+
+				case "stop":
+					interaction.update("停止");
+					break;
+
+				case "register":
+					await register();
+					break;
+
+				case "close":
+					interaction.webhook.deleteMessage("@original");
+					break;
+
+				default:
+					interaction.update("(´・ω・`)知らんがな");
+					break;
+			}
+		} catch (buttonError) {
+			appendLog(String(buttonError));
+		}
+	}
+});
+
+discord.login(CONFIG.discord.token);
+
+/*class Commands {
 	constructor(command, interactionId, token, webhook, guildId, options = null) {
 		this.command = command;
 		this.interactionId = interactionId;
@@ -39,44 +257,6 @@ class Commands {
 		this.guildId = guildId;
 		this.instance = "";
 		this.options = options;
-	}
-
-	embedIcon(type) {
-		switch (type) {
-			case "on":
-				return "https://mtail3x.wpblog.jp/wp-content/uploads/2017/12/power.png";
-			case "off":
-				return "https://mtail3x.wpblog.jp/wp-content/uploads/2017/12/Power_off.png";
-			case "success":
-				return "https://freeiconshop.com/wp-content/uploads/edd/checkmark-flat.png";
-			case "failed":
-				return "https://icon-library.com/images/failed-icon/failed-icon-7.jpg";
-			case "load":
-				return "https://i.stack.imgur.com/kOnzy.gif";
-			case "question":
-				return "https://icooon-mono.com/i/icon_11571/icon_115710_256.png";
-			default:
-				return "https://icooon-mono.com/i/icon_11571/icon_115710_256.png";
-		}
-	}
-
-	embedColor(type) {
-		switch (type) {
-			case "on":
-				return 2001125;
-			case "off":
-				return 16725063;
-			case "success":
-				return 3270553;
-			case "failed":
-				return 16725063;
-			case "load":
-				return 0;
-			case "question":
-				return 14135295;
-			default:
-				return 0;
-		}
 	}
 
 	async callback(message, type) {
@@ -303,14 +483,4 @@ class Commands {
 		}
 	}
 }
-
-discord.on("interactionCreate", (interaction) => {
-	if (!interaction.isCommand()) {
-		return;
-	}
-
-	command = new Commands(interaction.commandName, interaction.id, interaction.token, interaction.webhook, interaction.guildId, interaction.options);
-	command.do();
-});
-
-discord.login(CONFIG["bot"]["token"]);
+*/
