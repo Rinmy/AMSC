@@ -1,67 +1,49 @@
-import {
-	Client,
-	Intents,
-	MessageEmbed,
-	MessageActionRow,
-	MessageButton,
-	Message,
-} from "discord.js";
+import { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, Message } from "discord.js";
 // @ts-expect-error
 import Compute from "@google-cloud/compute";
 import Fs from "fs";
-import {fileURLToPath} from "url";
-import {dirname} from "path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const CONFIG = JSON.parse(Fs.readFileSync(`${__dirname}/config.json`, "utf-8"));
-const serverList = JSON.parse(Fs.readFileSync(`${__dirname}/server.json`, "utf-8"));
+const CONFIG = JSON.parse(Fs.readFileSync("./config.json", "utf-8"));
+const serverList = JSON.parse(Fs.readFileSync("./server.json", "utf-8"));
 
 const compute = new Compute({
 	projectId: CONFIG.gcp.project_id,
-	keyFilename: "./api.json",
+	keyFilename: "./api.json"
 });
 
 const discord = new Client({
 	intents: [
 		Intents.FLAGS.GUILDS,
 		Intents.FLAGS.GUILD_MESSAGES,
-		Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
-	],
+		Intents.FLAGS.GUILD_MESSAGE_REACTIONS
+	]
 });
 
 // zzZ
-const sleep = (seconds: number): void => {
+const sleep = (seconds: number) => {
 	new Promise((resolve) => {
 		setTimeout(resolve, seconds);
 	});
 };
 
 // ログ
-const appendLog = (content: string): void => {
+const appendLog = (content: string) => {
 	const date = new Date();
-	const currentTime = `${date.getFullYear()}.${
-		date.getMonth() + 1
-	}.${date.getDate()}|${date.getHours()}:${date.getMinutes()}`;
+	const currentTime = `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}|${date.getHours()}:${date.getMinutes()}`;
 	const log = `${currentTime}\n${content}\n\n---------------------\n\n`;
 
 	Fs.appendFileSync("./error.log", log);
 };
 
-// Minecraftサーバーの状態チェック
-interface serverStatus {
-	status: string;
-	ip: string;
-}
-const getServerStatus = async (id: string): Promise<serverStatus> => {
+// GCPサーバーの状態チェック
+const getServerStatus = async (id: string) => {
 	interface serverData {
 		discord_server_id: string;
 		gcp_instance: string;
 		gcp_zone: string;
 	}
 
-	const server = serverList.server.filter((list: serverData): boolean => {
+	const server = serverList.server.filter((list: serverData) => {
 		return list.discord_server_id === id;
 	})[0];
 
@@ -86,19 +68,38 @@ const getServerStatus = async (id: string): Promise<serverStatus> => {
 	}
 };
 
-// 要望聞く
-interface whatSay {
-	embeds: MessageEmbed[];
-	components: MessageActionRow[];
-}
-const what = async (guildId: string): Promise<whatSay> => {
-	const server: serverStatus = await getServerStatus(guildId);
+const createEmbed = (text: string, type: "load" | "success" | "default", components: null | MessageActionRow[]) => {
+	const embedImage = () => {
+		switch (type) {
+			case "default": return "";
+			case "load": return "https://kuraline.jp/read/content/images/common/loading.gif";
+			case "success": return "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQVzP5dnyi1bktIciRYvDsDIZUsq-Ns_B1-DxD2_d_JxuVxvxEm8OqoLjw62hu_yDNfKfs&usqp=CAU";
+			default: return "";
+		}
+	};
 
 	const embed = new MessageEmbed()
 		.setColor("#29B6F6")
 		.setTitle("")
-		.setAuthor("(。´・ω・)ん?")
+		.setAuthor(text, embedImage())
 		.setDescription("");
+
+	if (components !== null) {
+		return {
+			embeds: [embed],
+			components: components,
+		};
+	} else {
+		return {
+			embeds: [embed],
+			components: [],
+		};
+	}
+};
+
+// 要望聞く
+const what = async (guildId: string) => {
+	const server = await getServerStatus(guildId);
 
 	const updateStatusButton = new MessageActionRow().addComponents(
 		new MessageButton()
@@ -136,7 +137,10 @@ const what = async (guildId: string): Promise<whatSay> => {
 	);
 
 	const closeButton = new MessageActionRow().addComponents(
-		new MessageButton().setLabel("閉じる").setCustomId("close").setStyle("DANGER")
+		new MessageButton()
+			.setLabel("閉じる")
+			.setCustomId("close")
+			.setStyle("DANGER")
 	);
 
 	let components: MessageActionRow[];
@@ -172,14 +176,11 @@ const what = async (guildId: string): Promise<whatSay> => {
 			break;
 	}
 
-	return {
-		embeds: [embed],
-		components: components,
-	};
+	return createEmbed("(。´・ω・)ん?", "default", components);
 };
 
-discord.on("messageCreate", async (message: Message): Promise<void> => {
-	if (message.author.bot) {
+discord.on("messageCreate", async (message: Message) => {
+	if (message.author.bot || !message.mentions.has("875679319219925022")) {
 		return;
 	}
 
@@ -197,47 +198,112 @@ discord.on("messageCreate", async (message: Message): Promise<void> => {
 	}
 });
 
-discord.on("interactionCreate", async (interaction): Promise<void> => {
+discord.on("interactionCreate", async (interaction) => {
 	if (interaction.isButton()) {
-		const register = async (): Promise<void> => {
-			interaction.update("登録中です。");
+		const interactionRegister = async () => {
+			if (interaction.channel === null) {
+				return;
+			}
 
-			serverList.server.push({
+			//const webhook = interaction.webhook;
+			//webhook.editMessage("@original", "aaa");
+
+			//await interaction.update(createEmbed("GCPインスタンス名を入力", "load", null));
+
+			const instanceName = await interaction.channel.awaitMessages({ max: 1, time: 20 * 1000 });
+			const instanceNameResponse = instanceName.first();
+			if (!instanceNameResponse) {
+				await interaction.update(createEmbed("登録失敗", "default", null));
+				return;
+			}
+
+			console.log(instanceNameResponse.content);
+
+			await interaction.update(createEmbed("ゾーンを入力", "load", null));
+
+			const zoneName = await interaction.channel.awaitMessages({ max: 1, time: 20 * 1000 });
+			const zoneNameResponse = zoneName.first();
+			if (!zoneNameResponse) {
+				await interaction.update(createEmbed("登録失敗", "default", null));
+				return;
+			}
+
+			console.log(zoneNameResponse.content);
+
+			/*serverList.server.push({
 				discord_server_id: interaction.guildId,
 				gcp_instance: "test",
 				gcp_zone: "test2",
 			});
 
-			Fs.writeFileSync(`${__dirname}/server.json`, JSON.stringify(serverList));
+			Fs.writeFileSync(`./server.json`, JSON.stringify(serverList));*/
 
-			interaction.update("登録しました。");
+			await interaction.update(createEmbed("登録完了", "success", null));
+		};
+
+		const interactionUpdateStatus = async () => {
+			const content = await what(interaction.guildId);
+			await interaction.update(content);
+		};
+
+		const interactionStart = async () => {
+			await interaction.update(createEmbed("起動中", "load", null));
+
+			for (let i = 0; i < 5; i++) {
+				await sleep(5);
+				const server = await getServerStatus(interaction.guildId);
+				if (server.status === "RUNNING" || "TERMINATED") {
+					if (server.status === "RUNNING") {
+						await interaction.update(createEmbed("起動完了", "success", null));
+						sleep(4);
+					}
+					break;
+				}
+			}
+
+			const content = await what(interaction.guildId);
+			await interaction.update(content);
+		};
+
+		const interactionStop = async () => {
+			await interaction.update(createEmbed("停止中", "load", null));
+
+			for (let i = 0; i < 5; i++) {
+				await sleep(5);
+				const server = await getServerStatus(interaction.guildId);
+				if (server.status === "RUNNING" || "TERMINATED") {
+					if (server.status === "TERMINATED") {
+						await interaction.update(createEmbed("停止完了", "success", null));
+						sleep(4);
+					}
+					break;
+				}
+			}
+
+			const content = await what(interaction.guildId);
+			await interaction.update(content);
 		};
 
 		try {
 			switch (interaction.customId) {
 				case "update-status":
-					const content = await what(interaction.guildId);
-					interaction.update(content);
+					await interactionUpdateStatus();
 					break;
 
 				case "start":
-					interaction.update("起動");
+					await interactionStart();
 					break;
 
 				case "stop":
-					interaction.update("停止");
+					await interactionStop();
 					break;
 
 				case "register":
-					await register();
-					break;
-
-				case "close":
-					interaction.webhook.deleteMessage("@original");
+					await interactionRegister();
 					break;
 
 				default:
-					interaction.update("(´・ω・`)知らんがな");
+					await interaction.update(createEmbed("(´・ω・`)？", "default", null));
 					break;
 			}
 		} catch (buttonError) {
@@ -247,240 +313,3 @@ discord.on("interactionCreate", async (interaction): Promise<void> => {
 });
 
 discord.login(CONFIG.discord.token);
-
-/*class Commands {
-	constructor(command, interactionId, token, webhook, guildId, options = null) {
-		this.command = command;
-		this.interactionId = interactionId;
-		this.token = token;
-		this.webhook = webhook;
-		this.guildId = guildId;
-		this.instance = "";
-		this.options = options;
-	}
-
-	async callback(message, type) {
-		await discord.api.interactions(this.interactionId, this.token).callback.post({
-			data: {
-				type: 4,
-				data: {
-					content: "ㅤ",
-					embeds: [
-						{
-							title: "",
-							color: this.embedColor(type),
-							author: {
-								name: message,
-								icon_url: this.embedIcon(type),
-							},
-							description: "",
-						},
-					],
-				},
-			},
-		});
-	}
-
-	async edit(message, type, description = "") {
-		await this.webhook.editMessage("@original", {
-			content: "ㅤ",
-			embeds: [
-				{
-					title: "",
-					color: this.embedColor(type),
-					author: {
-						name: message,
-						icon_url: this.embedIcon(type),
-					},
-					description: description,
-				},
-			],
-		});
-	}
-
-	async delete() {
-		await this.webhook.deleteMessage("@original");
-	}
-
-	async status() {
-		const data = await this.instance.get();
-
-		if (data[0]["metadata"]["networkInterfaces"][0]["accessConfigs"][0]["natIP"] !== void 0) {
-			discord.user.setActivity(data[0]["metadata"]["networkInterfaces"][0]["accessConfigs"][0]["natIP"], {type: "LISTENING"});
-		} else {
-			discord.user.setActivity("", {type: "STREAMING"});
-		}
-
-		return data[0]["metadata"]["status"];
-	}
-
-	async start() {
-		const data = await this.instance.start();
-		return data[0]["metadata"]["status"];
-	}
-
-	async stop() {
-		const data = await this.instance.stop();
-		return data[0]["metadata"]["status"];
-	}
-
-	async do() {
-		try {
-			if (this.command !== "add" && CONFIG["server"][this.guildId] === void 0) {
-				await this.callback("サーバーを登録してください", "failed");
-			} else {
-				if (this.command !== "add") {
-					const zone = compute.zone(CONFIG["server"][this.guildId]["zone"]);
-					this.instance = zone.vm(CONFIG["server"][this.guildId]["instance"]);
-				}
-
-				let status;
-				switch (this.command) {
-					case "status":
-						await this.callback("サーバーへ接続中です", "load");
-
-						status = await this.status();
-						switch (status) {
-							case "TERMINATED":
-								await this.edit("サーバーは現在停止中です", "off");
-								break;
-
-							case "RUNNING":
-								await this.edit("サーバーは現在動作中です", "on");
-								break;
-
-							case "STOPPING":
-								await this.edit("サーバーは現在停止処理中", "off");
-								break;
-
-							case "STAGING":
-								await this.edit("サーバーは現在起動処理中", "off");
-								break;
-
-							default:
-								await this.edit("サーバーの状態が不明です", "question");
-								break;
-						}
-						break;
-
-					case "start":
-						await this.callback("サーバーへ接続中です", "load");
-
-						status = await this.status();
-						if (status === "TERMINATED") {
-							if ((await this.start()) === "RUNNING") {
-								await this.edit("サーバーを起動中です", "load");
-
-								for (let i = 0; i < 10; i++) {
-									if (i >= 4) {
-										await this.edit("タイムアウトしました。", "off", "数分後に状態の確認をおすすめします。");
-										break;
-									}
-									await sleep(6000);
-
-									status = await this.status();
-									if (status === "RUNNING") {
-										await this.edit("サーバーを起動しました", "success", "約1分後にログイン可能です。");
-										break;
-									}
-								}
-							} else {
-								await this.edit("サーバーを起動できませんでした。", "failed");
-							}
-						} else {
-							switch (status) {
-								case "RUNNING":
-									await this.edit("サーバーは既に起動しています", "failed");
-									break;
-
-								case "STOPPING":
-									await this.edit("サーバーは現在停止処理中なので、起動できません", "failed");
-									break;
-
-								case "STAGING":
-									await this.edit("サーバーは既に起動処理中です。", "failed");
-									break;
-
-								default:
-									await this.edit("サーバーの状態が不明なので、起動できません", "failed");
-									break;
-							}
-						}
-						break;
-
-					case "stop":
-						await this.callback("サーバーへ接続中です", "load");
-
-						status = await this.status();
-						if (status === "RUNNING") {
-							await this.edit("サーバーを停止中です", "load");
-
-							if ((await this.stop()) === "RUNNING") {
-								for (let i = 0; i < 10; i++) {
-									if (i >= 8) {
-										await this.edit("タイムアウトしました。", "off", "数分後に状態の確認をおすすめします。");
-										break;
-									}
-									await sleep(6000);
-
-									status = await this.status();
-									if (status === "TERMINATED") {
-										await this.edit("サーバーを停止しました", "success");
-										break;
-									}
-								}
-							} else {
-								await this.edit("サーバーを停止できませんでした。", "failed");
-							}
-						} else {
-							switch (status) {
-								case "TERMINATED":
-									await this.edit("サーバーは既に停止しています", "failed");
-									break;
-
-								case "STOPPING":
-									await this.edit("サーバーは既に停止処理中です。", "failed");
-									break;
-
-								case "STAGING":
-									await this.edit("サーバーは現在起動処理中なので、停止できません", "failed");
-									break;
-
-								default:
-									await this.edit("サーバーの状態が不明なので、停止できません", "failed");
-									break;
-							}
-						}
-						break;
-
-					case "add":
-						await this.callback("登録中です", "load");
-
-						CONFIG["server"][this.guildId] = {
-							instance: this.options.getString("instance"),
-							zone: this.options.getString("zone"),
-						};
-						Fs.writeFileSync("./config.json", JSON.stringify(CONFIG));
-
-						await this.edit("登録しました", "success", `インスタンス：${CONFIG["server"][this.guildId]["instance"]}\nゾーン：${CONFIG["server"][this.guildId]["zone"]}`);
-						break;
-
-					default:
-						this.callback("不明なコマンドです", "failed");
-						break;
-				}
-			}
-
-			await sleep(10000);
-			await this.delete();
-		} catch (error1) {
-			try {
-				await this.edit("エラーが発生しました", "failed", error1.message);
-			} catch (error2) {
-				appendLog(error2.message);
-			}
-			appendLog(error1.message);
-		}
-	}
-}
-*/
